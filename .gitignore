@@ -23,6 +23,27 @@
 # misc
 .DS_Store
 *.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# local secrets
+.dev.vars*
+.wrangler/
+.secrets/
+secrets/
+credentials.json
+service-account*.json
+*.secrets.*
+
+# database backups and local data
+*.dump
+*.backup
+*.sqlite
+*.sqlite3
+*.db
 
 # debug
 npm-debug.log*
@@ -32,6 +53,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +61,4 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.env.example.local
