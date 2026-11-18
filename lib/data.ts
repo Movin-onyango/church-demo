@@ -1,8 +1,31 @@
 import "server-only";
 
 type SettingRow = { key: string; value: string };
-type ProjectRow = Record<string, unknown> & { id: string };
-type ProjectRelatedRow = Record<string, unknown>;
+type ProjectRow = {
+  id: number;
+  title: string;
+  slug: string;
+  description: string;
+  status: "completed" | "current" | "upcoming";
+  target_amount: number | null;
+  raised_amount: number;
+  start_date: string | null;
+  is_published: boolean;
+  display_order: number;
+};
+type ProjectMediaRow = {
+  id: number;
+  media_type: "image" | "youtube";
+  url: string;
+  caption: string | null;
+  display_order: number;
+};
+type ProjectFieldRow = {
+  id: number;
+  field_key: string;
+  field_value: string;
+  display_order: number;
+};
 
 export type ServiceTime = {
   id: string;
@@ -182,12 +205,14 @@ export async function getGroupAreas(): Promise<string[]> {
 }
 
 export async function getProjects(): Promise<ProjectRow[]> {
-  return restGet("projects?is_published=eq.true&order=display_order.asc");
+  return restGet<ProjectRow[]>(
+    "projects?is_published=eq.true&order=display_order.asc",
+  );
 }
 
 export async function getProjectBySlug(
   slug: string,
-): Promise<(ProjectRow & { media: ProjectRelatedRow[]; fields: ProjectRelatedRow[] }) | null> {
+): Promise<(ProjectRow & { media: ProjectMediaRow[]; fields: ProjectFieldRow[] }) | null> {
   const projects = await restGet<ProjectRow[]>(
     `projects?slug=eq.${encodeURIComponent(slug)}&is_published=eq.true&limit=1`,
   );
@@ -195,10 +220,10 @@ export async function getProjectBySlug(
   const project = projects[0];
 
   const [media, fields] = await Promise.all([
-    restGet<ProjectRelatedRow[]>(
+    restGet<ProjectMediaRow[]>(
       `project_media?project_id=eq.${encodeURIComponent(project.id)}&order=display_order.asc`,
     ),
-    restGet<ProjectRelatedRow[]>(
+    restGet<ProjectFieldRow[]>(
       `project_custom_fields?project_id=eq.${encodeURIComponent(project.id)}&order=display_order.asc`,
     ),
   ]);
