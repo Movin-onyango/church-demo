@@ -1,326 +1,485 @@
-// app/admin/projects/page.tsx
-'use client';
-import { useEffect, useState } from 'react';
-import { createClient } from '@/lib/supabase-client';
 
-type Project = {
-  id: number; title: string; slug: string; description: string;
-  status: 'completed' | 'current' | 'upcoming';
-  target_amount: number | null; raised_amount: number | null;
-  start_date: string | null; is_published: boolean; display_order: number;
+import Link from "next/link";
+import { getProjects } from "@/lib/data";
+
+export const revalidate = 10;
+
+// --------------------------------------------------
+// TYPES
+// --------------------------------------------------
+
+type ProjectMedia = {
+  id?: number;
+  media_type: "image" | "youtube";
+  url: string;
+  caption?: string | null;
+  display_order?: number;
 };
 
-export default function AdminProjectsPage() {
-  const supabase = createClient();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<Project | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
+type Project = {
+  id: number;
+  title: string;
+  slug: string;
+  description: string;
+  status: "current" | "upcoming" | "completed";
+  target_amount: number | null;
+  raised_amount: number | null;
+  start_date?: string | null;
+  project_media?: ProjectMedia[];
+  image_url?: string | null;
+};
 
-  // Core Form State
-  const [form, setForm] = useState<Partial<Project>>({});
-  
-  // Relational State
-  const [media, setMedia] = useState<any[]>([]);
-  const [fields, setFields] = useState<any[]>([]);
-  
-  const [saving, setSaving] = useState(false);
+// --------------------------------------------------
+// HELPERS
+// --------------------------------------------------
 
-  async function load() {
-    setLoading(true);
-    const { data } = await supabase.from('projects').select('*').order('display_order');
-    setProjects((data as Project[]) ?? []);
-    setLoading(false);
-  }
+function formatKES(amount: number) {
+  return new Intl.NumberFormat("en-KE", {
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
 
-  useEffect(() => { load(); }, []);
+function getProjectImage(project: Project) {
+  // Prefer an uploaded image from the project media gallery.
+  const uploadedImage = project.project_media?.find(
+    (media) =>
+      media.media_type === "image" &&
+      Boolean(media.url)
+  );
 
-  async function openForm(project?: Project) {
-    if (project) {
-      setEditing(project);
-      setForm(project);
-      
-      // Fetch relational data
-      const [mediaRes, fieldsRes] = await Promise.all([
-        supabase.from('project_media').select('*').eq('project_id', project.id).order('display_order'),
-        supabase.from('project_custom_fields').select('*').eq('project_id', project.id).order('display_order')
-      ]);
-      setMedia(mediaRes.data || []);
-      setFields(fieldsRes.data || []);
-    } else {
-      setEditing(null);
-      setForm({ status: 'current', is_published: true, display_order: projects.length + 1 });
-      setMedia([]);
-      setFields([]);
-    }
-    setIsCreating(true);
-  }
+  return uploadedImage?.url || project.image_url || null;
+}
 
-  // Helper to generate slug
-  function handleTitleChange(val: string) {
-    setForm(prev => ({ 
-      ...prev, 
-      title: val, 
-      slug: val.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') 
-    }));
-  }
+function getFundingPercentage(project: Project) {
+  const target = Number(project.target_amount || 0);
+  const raised = Number(project.raised_amount || 0);
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
+  if (target <= 0) return 0;
 
-    // 1. Save Project Core
-    const payload = {
-      title: form.title,
-      slug: form.slug,
-      description: form.description,
-      status: form.status,
-      target_amount: form.target_amount || null,
-      raised_amount: form.raised_amount || 0,
-      start_date: form.start_date || null,
-      is_published: form.is_published,
-      display_order: form.display_order
-    };
+  return Math.min(
+    100,
+    Math.max(0, (raised / target) * 100)
+  );
+}
 
-    let projectId = editing?.id;
+// --------------------------------------------------
+// PROJECT CARD
+// --------------------------------------------------
 
-    if (editing) {
-      const { error } = await supabase.from('projects').update(payload).eq('id', editing.id);
-      if (error) { alert(error.message); setSaving(false); return; }
-    } else {
-      const { data, error } = await supabase.from('projects').insert(payload).select().single();
-      if (error) { alert(error.message); setSaving(false); return; }
-      projectId = data.id;
-    }
+function ProjectCard({ p }: { p: Project }) {
+  const image = getProjectImage(p);
 
-    // 2. Sync Media
-    // Delete existing to prevent duplicates (simplest approach for this scale)
-    await supabase.from('project_media').delete().eq('project_id', projectId);
-    if (media.length > 0) {
-      const mediaPayload = media.map((m, i) => ({
-        project_id: projectId,
-        media_type: m.media_type,
-        url: m.url,
-        caption: m.caption,
-        display_order: i
-      }));
-      await supabase.from('project_media').insert(mediaPayload);
-    }
+  const percentage = getFundingPercentage(p);
 
-    // 3. Sync Custom Fields
-    await supabase.from('project_custom_fields').delete().eq('project_id', projectId);
-    if (fields.length > 0) {
-      const fieldsPayload = fields.map((f, i) => ({
-        project_id: projectId,
-        field_key: f.field_key,
-        field_value: f.field_value,
-        display_order: i
-      }));
-      await supabase.from('project_custom_fields').insert(fieldsPayload);
-    }
+  const raised = Number(p.raised_amount || 0);
 
-    setSaving(false);
-    setIsCreating(false);
-    load();
-  }
+  const target = Number(p.target_amount || 0);
 
-  async function handleDelete(id: number) {
-    if (!confirm('Delete this project and all its media?')) return;
-    await supabase.from('projects').delete().eq('id', id);
-    load();
-  }
-
-  // --- Media Handlers ---
-  async function uploadImage(file: File) {
-    const fileName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.]/g, '')}`;
-    const { error } = await supabase.storage.from('project-images').upload(fileName, file);
-    if (error) { alert(error.message); return; }
-    const { data } = supabase.storage.from('project-images').getPublicUrl(fileName);
-    setMedia(prev => [...prev, { media_type: 'image', url: data.publicUrl, caption: '' }]);
-  }
-
-  function addVideo() {
-    setMedia(prev => [...prev, { media_type: 'youtube', url: '', caption: '' }]);
-  }
-
-  function updateMedia(index: number, key: string, value: string) {
-    const newMedia = [...media];
-    newMedia[index][key] = value;
-    setMedia(newMedia);
-  }
-
-  function removeMedia(index: number) {
-    setMedia(prev => prev.filter((_, i) => i !== index));
-  }
-
-  // --- Field Handlers ---
-  function addField() {
-    setFields(prev => [...prev, { field_key: '', field_value: '' }]);
-  }
-
-  function updateField(index: number, key: string, value: string) {
-    const newFields = [...fields];
-    newFields[index][key] = value;
-    setFields(newFields);
-  }
-
-  function removeField(index: number) {
-    setFields(prev => prev.filter((_, i) => i !== index));
-  }
+  const statusStyles = {
+    current: "bg-amber-500 text-slate-950",
+    upcoming: "bg-white text-slate-900",
+    completed: "bg-slate-700 text-white",
+  };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">Projects</h1>
-          <p className="text-sm text-slate-500 mt-1">Manage church projects, media, and custom fields.</p>
+    <Link
+      href={`/projects/${p.slug}`}
+      className="group relative flex flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white transition-all duration-500 hover:-translate-y-2 hover:border-amber-300 hover:shadow-2xl"
+    >
+      {/* IMAGE SECTION */}
+
+      <div className="relative h-72 overflow-hidden bg-gradient-to-br from-slate-800 via-slate-900 to-amber-950">
+
+        {image ? (
+          <img
+            src={image}
+            alt={p.title}
+            className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-110"
+          />
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-800 via-slate-900 to-amber-950">
+            <div className="text-center">
+              <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl border border-white/20 bg-white/10 text-3xl text-amber-400">
+                ✦
+              </div>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-white/50">
+                Building the Vision
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Gradient Overlay */}
+
+        <div className="absolute inset-0 z-10 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent opacity-90 transition-opacity duration-300 group-hover:opacity-100" />
+
+        {/* Status Badge */}
+
+        <div className="absolute left-6 top-6 z-20">
+          <span
+            className={`inline-flex rounded-full px-4 py-1.5 text-xs font-extrabold uppercase tracking-wider shadow-lg ${statusStyles[p.status]}`}
+          >
+            {p.status}
+          </span>
         </div>
-        <button onClick={() => openForm()} className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-semibold hover:bg-slate-800">
-          + New Project
-        </button>
+
+        {/* Project Title */}
+
+        <div className="absolute bottom-6 left-6 right-6 z-20">
+          <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-amber-400">
+            Grace Church Initiatives
+          </p>
+
+          <h3 className="text-2xl font-extrabold leading-tight text-white transition-colors group-hover:text-amber-300 md:text-3xl">
+            {p.title}
+          </h3>
+        </div>
+
+        {/* Hover Indicator */}
+
+        <div className="absolute bottom-6 right-6 z-20 flex h-10 w-10 translate-y-3 items-center justify-center rounded-full bg-white text-slate-950 opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
+          →
+        </div>
       </div>
 
-      {loading ? <p>Loading…</p> : (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wider">
-              <tr>
-                <th className="text-left px-4 py-3">Title</th>
-                <th className="text-left px-4 py-3">Status</th>
-                <th className="text-left px-4 py-3">Published</th>
-                <th className="text-right px-4 py-3">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {projects.map(p => (
-                <tr key={p.id} className="border-t border-slate-100">
-                  <td className="px-4 py-3 font-medium">{p.title}</td>
-                  <td className="px-4 py-3 capitalize">{p.status}</td>
-                  <td className="px-4 py-3">{p.is_published ? 'Yes' : 'Draft'}</td>
-                  <td className="px-4 py-3 text-right">
-                    <button onClick={() => openForm(p)} className="text-amber-600 hover:underline mr-4">Edit</button>
-                    <button onClick={() => handleDelete(p.id)} className="text-red-600 hover:underline">Delete</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* PROJECT DETAILS */}
+
+      <div className="flex flex-1 flex-col justify-between p-6">
+
+        <div>
+          <p className="mb-6 line-clamp-3 text-sm leading-7 text-slate-600">
+            {p.description}
+          </p>
         </div>
-      )}
 
-      {isCreating && (
-        <div className="fixed inset-0 bg-black/50 flex items-start justify-center overflow-y-auto z-50 p-4">
-          <form onSubmit={handleSave} className="bg-white rounded-xl w-full max-w-3xl my-8 shadow-xl">
-            <div className="p-6 border-b border-slate-200 flex justify-between items-center sticky top-0 bg-white z-10 rounded-t-xl">
-              <h2 className="font-bold text-lg">{editing ? 'Edit Project' : 'New Project'}</h2>
-              <button type="button" onClick={() => setIsCreating(false)} className="text-slate-400 hover:text-slate-700">✕</button>
+        {/* FUNDRAISING PROGRESS */}
+
+        {target > 0 ? (
+          <div className="mt-auto">
+
+            <div className="mb-3 flex items-center justify-between gap-3 text-sm">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Raised so far
+                </p>
+
+                <p className="mt-1 text-lg font-extrabold text-emerald-600">
+                  KES {formatKES(raised)}
+                </p>
+              </div>
+
+              <div className="text-right">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Target
+                </p>
+
+                <p className="mt-1 font-bold text-slate-900">
+                  KES {formatKES(target)}
+                </p>
+              </div>
             </div>
-            
-            <div className="p-6 space-y-8">
-              {/* CORE INFO */}
-              <section className="space-y-4">
-                <h3 className="font-bold text-slate-400 uppercase text-xs tracking-wider">Core Details</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Title</label>
-                    <input value={form.title || ''} onChange={e => handleTitleChange(e.target.value)} required className="w-full border border-slate-300 rounded-lg px-3 py-2" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Slug (URL)</label>
-                    <input value={form.slug || ''} onChange={e => setForm({...form, slug: e.target.value})} required className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-slate-50" />
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium mb-1">Description</label>
-                  <textarea value={form.description || ''} onChange={e => setForm({...form, description: e.target.value})} required rows={4} className="w-full border border-slate-300 rounded-lg px-3 py-2" />
-                </div>
 
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Status</label>
-                    <select value={form.status} onChange={e => setForm({...form, status: e.target.value as any})} className="w-full border border-slate-300 rounded-lg px-3 py-2">
-                      <option value="current">Current</option>
-                      <option value="upcoming">Upcoming</option>
-                      <option value="completed">Completed</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Target Amount (KES)</label>
-                    <input type="number" value={form.target_amount || ''} onChange={e => setForm({...form, target_amount: Number(e.target.value)})} className="w-full border border-slate-300 rounded-lg px-3 py-2" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Raised Amount (KES)</label>
-                    <input type="number" value={form.raised_amount || ''} onChange={e => setForm({...form, raised_amount: Number(e.target.value)})} className="w-full border border-slate-300 rounded-lg px-3 py-2" />
-                  </div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <label className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={form.is_published} onChange={e => setForm({...form, is_published: e.target.checked})} className="rounded border-slate-300" />
-                    Published
-                  </label>
-                </div>
-              </section>
+            {/* Progress Track */}
 
-              <hr className="border-slate-200" />
-
-              {/* MEDIA GALLERY */}
-              <section className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-slate-400 uppercase text-xs tracking-wider">Media (Images & Videos)</h3>
-                  <div className="flex gap-2">
-                    <label className="text-xs font-semibold text-amber-600 hover:underline cursor-pointer">
-                      + Upload Image
-                      <input type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && uploadImage(e.target.files[0])} />
-                    </label>
-                    <button type="button" onClick={addVideo} className="text-xs font-semibold text-amber-600 hover:underline">+ Add YouTube</button>
-                  </div>
-                </div>
-                
-                {media.map((m, i) => (
-                  <div key={i} className="flex gap-3 items-start bg-slate-50 p-3 rounded-lg border border-slate-200">
-                    <div className="w-20 h-20 bg-slate-200 rounded flex-shrink-0 flex items-center justify-center overflow-hidden">
-                      {m.media_type === 'image' ? <img src={m.url} className="w-full h-full object-cover" /> : 'YT'}
-                    </div>
-                    <div className="flex-1 space-y-2">
-                      <input value={m.url} onChange={e => updateMedia(i, 'url', e.target.value)} placeholder="URL or YouTube ID" className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white" readOnly={m.media_type === 'image'} />
-                      <input value={m.caption || ''} onChange={e => updateMedia(i, 'caption', e.target.value)} placeholder="Caption (optional)" className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white" />
-                    </div>
-                    <button type="button" onClick={() => removeMedia(i)} className="text-red-500 text-sm font-medium mt-1">Remove</button>
-                  </div>
-                ))}
-              </section>
-
-              <hr className="border-slate-200" />
-
-              {/* CUSTOM FIELDS */}
-              <section className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-slate-400 uppercase text-xs tracking-wider">Custom Details (Key/Value)</h3>
-                  <button type="button" onClick={addField} className="text-xs font-semibold text-amber-600 hover:underline">+ Add Field</button>
-                </div>
-                <p className="text-xs text-slate-500">Add specific details like "Project Manager", "Land Size", or "Contractor".</p>
-                
-                {fields.map((f, i) => (
-                  <div key={i} className="flex gap-2 items-center">
-                    <input value={f.field_key} onChange={e => updateField(i, 'field_key', e.target.value)} placeholder="Label (e.g. Contractor)" className="w-1/3 border border-slate-300 rounded px-3 py-2 text-sm" />
-                    <input value={f.field_value} onChange={e => updateField(i, 'field_value', e.target.value)} placeholder="Value (e.g. BuildCo Ltd)" className="flex-1 border border-slate-300 rounded px-3 py-2 text-sm" />
-                    <button type="button" onClick={() => removeField(i)} className="text-red-500 text-sm font-medium px-2">✕</button>
-                  </div>
-                ))}
-              </section>
-
+            <div
+              className="h-3 w-full overflow-hidden rounded-full bg-slate-100"
+              role="progressbar"
+              aria-label={`${p.title} fundraising progress`}
+              aria-valuenow={Math.round(percentage)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-green-500 via-emerald-500 to-teal-400 transition-all duration-1000 ease-out"
+                style={{
+                  width: `${percentage}%`,
+                }}
+              />
             </div>
-            
-            <div className="p-6 border-t border-slate-200 flex justify-end gap-2 sticky bottom-0 bg-white rounded-b-xl z-10">
-              <button type="button" onClick={() => setIsCreating(false)} className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-medium">Cancel</button>
-              <button type="submit" disabled={saving} className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-50">
-                {saving ? 'Saving…' : 'Save Project'}
-              </button>
+
+            <div className="mt-2 flex items-center justify-between">
+              <p className="text-xs font-semibold text-emerald-600">
+                {Math.round(percentage)}% funded
+              </p>
+
+              <p className="text-xs text-slate-400">
+                {formatKES(Math.max(0, target - raised))} remaining
+              </p>
             </div>
-          </form>
+          </div>
+        ) : (
+          <div className="mt-auto flex items-center justify-between border-t border-slate-100 pt-5">
+            <p className="text-sm font-bold text-amber-600">
+              Vision Project
+            </p>
+
+            <span className="text-xl text-slate-400 transition-transform group-hover:translate-x-2">
+              →
+            </span>
+          </div>
+        )}
+
+        {/* VIEW PROJECT */}
+
+        <div className="mt-6 border-t border-slate-100 pt-4">
+          <span className="text-sm font-bold text-slate-900 transition-colors group-hover:text-amber-600">
+            Explore Project →
+          </span>
         </div>
-      )}
-    </div>
+
+      </div>
+    </Link>
+  );
+}
+
+// --------------------------------------------------
+// PROJECT SECTION
+// --------------------------------------------------
+
+function ProjectSection({
+  title,
+  subtitle,
+  projects,
+  number,
+  color,
+}: {
+  title: string;
+  subtitle: string;
+  projects: Project[];
+  number: string;
+  color: "amber" | "slate" | "green";
+}) {
+  if (projects.length === 0) return null;
+
+  const numberStyles = {
+    amber: "bg-amber-100 text-amber-700",
+    slate: "bg-slate-200 text-slate-700",
+    green: "bg-green-100 text-green-700",
+  };
+
+  return (
+    <section className="mb-24">
+
+      {/* SECTION HEADER */}
+
+      <div className="mb-10 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+
+        <div>
+          <div className="mb-3 flex items-center gap-3">
+            <span
+              className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-extrabold ${numberStyles[color]}`}
+            >
+              {number}
+            </span>
+
+            <span className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">
+              Our Church Projects
+            </span>
+          </div>
+
+          <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 md:text-4xl">
+            {title}
+          </h2>
+
+          <p className="mt-2 text-sm text-slate-500">
+            {subtitle}
+          </p>
+        </div>
+
+        <p className="text-sm font-semibold text-slate-400">
+          {projects.length}{" "}
+          {projects.length === 1 ? "Project" : "Projects"}
+        </p>
+
+      </div>
+
+      {/* PROJECT GRID */}
+
+      <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
+        {projects.map((p) => (
+          <ProjectCard key={p.id} p={p} />
+        ))}
+      </div>
+
+    </section>
+  );
+}
+
+// --------------------------------------------------
+// MAIN PROJECTS PAGE
+// --------------------------------------------------
+
+export default async function ProjectsPage() {
+  const projects = await getProjects();
+
+  // Normalize project records.
+  const projectRecords = (projects || []) as unknown as Project[];
+
+  // Organize projects by status.
+  const current = projectRecords.filter(
+    (p) => p.status === "current"
+  );
+
+  const upcoming = projectRecords.filter(
+    (p) => p.status === "upcoming"
+  );
+
+  const completed = projectRecords.filter(
+    (p) => p.status === "completed"
+  );
+
+  return (
+    <main className="min-h-screen bg-slate-50 pb-24">
+
+      {/* HERO SECTION */}
+
+      <section className="relative overflow-hidden bg-slate-950 pb-28 pt-28 md:pb-36 md:pt-36">
+
+        {/* Background Decorations */}
+
+        <div className="absolute -right-40 -top-40 h-96 w-96 rounded-full bg-amber-500/10 blur-3xl" />
+
+        <div className="absolute -bottom-40 -left-40 h-96 w-96 rounded-full bg-blue-500/10 blur-3xl" />
+
+        <div className="relative z-10 mx-auto max-w-5xl px-4 text-center">
+
+          <span className="inline-flex items-center rounded-full border border-amber-400/30 bg-amber-400/10 px-5 py-2 text-xs font-bold uppercase tracking-[0.25em] text-amber-400">
+            Faith in Action
+          </span>
+
+          <h1 className="mt-8 text-5xl font-black leading-tight tracking-tight text-white md:text-7xl">
+            Building the{" "}
+            <span className="bg-gradient-to-r from-amber-300 via-amber-400 to-yellow-500 bg-clip-text text-transparent">
+              Vision
+            </span>
+          </h1>
+
+          <p className="mx-auto mt-8 max-w-3xl text-lg leading-8 text-slate-300 md:text-xl">
+            See what God is doing through our church. From building
+            projects to community outreach, every initiative is
+            an opportunity to make a lasting difference.
+          </p>
+
+          <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
+
+            <Link
+              href="#current-projects"
+              className="rounded-full bg-amber-400 px-8 py-4 text-sm font-extrabold text-slate-950 shadow-xl transition-all hover:-translate-y-1 hover:bg-amber-300"
+            >
+              Explore Our Projects
+            </Link>
+
+            <Link
+              href="/give"
+              className="rounded-full border border-white/20 bg-white/5 px-8 py-4 text-sm font-bold text-white transition-all hover:border-amber-400 hover:bg-white/10"
+            >
+              Support Our Mission
+            </Link>
+
+          </div>
+
+          {/* Project Statistics */}
+
+          <div className="mx-auto mt-20 grid max-w-2xl grid-cols-3 gap-6 border-t border-white/10 pt-10">
+
+            <div>
+              <p className="text-3xl font-black text-white md:text-4xl">
+                {projectRecords.length}
+              </p>
+              <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Total Projects
+              </p>
+            </div>
+
+            <div>
+              <p className="text-3xl font-black text-amber-400 md:text-4xl">
+                {current.length}
+              </p>
+              <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Ongoing
+              </p>
+            </div>
+
+            <div>
+              <p className="text-3xl font-black text-emerald-400 md:text-4xl">
+                {completed.length}
+              </p>
+              <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Completed
+              </p>
+            </div>
+
+          </div>
+
+        </div>
+      </section>
+
+      {/* PROJECT CONTENT */}
+
+      <div className="mx-auto max-w-7xl px-4 pt-24">
+
+        {/* CURRENT PROJECTS */}
+
+        <div id="current-projects">
+          <ProjectSection
+            number="01"
+            title="Current Projects"
+            subtitle="Be part of what God is building today."
+            projects={current}
+            color="amber"
+          />
+        </div>
+
+        {/* UPCOMING PROJECTS */}
+
+        <ProjectSection
+          number="02"
+          title="Coming Soon"
+          subtitle="Discover the next steps in our church's vision."
+          projects={upcoming}
+          color="slate"
+        />
+
+        {/* COMPLETED PROJECTS */}
+
+        <ProjectSection
+          number="03"
+          title="Completed by God's Grace"
+          subtitle="Celebrating the milestones made possible through faith and generosity."
+          projects={completed}
+          color="green"
+        />
+
+        {/* EMPTY STATE */}
+
+        {projectRecords.length === 0 && (
+          <div className="rounded-3xl border border-slate-200 bg-white px-6 py-20 text-center shadow-sm">
+
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-50 text-3xl text-amber-500">
+              ✦
+            </div>
+
+            <h2 className="mt-6 text-2xl font-extrabold text-slate-900">
+              Great things are being prepared.
+            </h2>
+
+            <p className="mx-auto mt-3 max-w-lg text-sm leading-7 text-slate-500">
+              Our project updates will appear here. Please check
+              back soon to see what God is doing through our church.
+            </p>
+
+            <Link
+              href="/"
+              className="mt-8 inline-flex rounded-full bg-slate-950 px-7 py-3 text-sm font-bold text-white transition-colors hover:bg-amber-500 hover:text-slate-950"
+            >
+              Return Home
+            </Link>
+
+          </div>
+        )}
+
+      </div>
+
+    </main>
   );
 }

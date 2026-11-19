@@ -16,6 +16,7 @@
 # next.js
 /.next/
 /out/
+/.open-next/
 
 # production
 /build
@@ -64,3 +65,5 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .env.example.local
+
+!.dev.vars.example

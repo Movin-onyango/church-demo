@@ -3,8 +3,6 @@ import { notFound } from "next/navigation";
 import SermonVideo from "@/components/SermonVideo";
 import { getAllSermons, getSermonById } from "@/lib/data";
 
-export const dynamicParams = false;
-
 export async function generateStaticParams() {
   const sermons = await getAllSermons();
   return sermons.map((sermon) => ({ id: String(sermon.id) }));

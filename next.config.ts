@@ -1,12 +1,17 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  output: 'export', // Required for Cloudflare Pages static hosting
   images: {
-    unoptimized: true, // Required for static export
+    unoptimized: true,
   },
-  // Explicitly disable Cache Components to allow export mode
-  cacheComponents: false,
+  turbopack: {
+    rules: {
+      '*.css': {
+        loaders: ['@tailwindcss/turbopack'],
+        as: '*.css',
+      },
+    },
+  },
 };
 
 export default nextConfig;

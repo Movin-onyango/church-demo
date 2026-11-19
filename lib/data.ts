@@ -94,34 +94,58 @@ export type NavLink = {
   label: string;
 };
 
+export type HomepageSectionType =
+  | "hero"
+  | "service_times"
+  | "featured_sermon"
+  | "visit_cards"
+  | "giving_cta"
+  | "announcements";
+
+export type HomepageSection = {
+  id: number;
+  section_type: HomepageSectionType;
+  title: string | null;
+  is_active: boolean;
+  display_order: number;
+};
+
 function getSupabaseConfig() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (!url || !anonKey) {
-    throw new Error(
-      "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY.",
-    );
-  }
-
-  return { url: url.replace(/\/+$/, ""), anonKey };
+  return {
+    url: url?.replace(/\/+$/, ""),
+    anonKey,
+  };
 }
 
-async function restGet<T>(path: string): Promise<T> {
+async function restGet<T>(path: string, revalidate = 60): Promise<T> {
   const { url, anonKey } = getSupabaseConfig();
-  const res = await fetch(`${url}/rest/v1/${path}`, {
-    headers: {
-      apikey: anonKey,
-      Authorization: `Bearer ${anonKey}`,
-    },
-    next: { revalidate: 10 },
-  });
-
-  if (!res.ok) {
-    throw new Error(`Supabase request failed (${res.status}): ${path}`);
+  if (!url || !anonKey) {
+    console.warn("Missing Supabase environment variables; using empty data.");
+    return [] as T;
   }
 
-  return (await res.json()) as T;
+  try {
+    const res = await fetch(`${url}/rest/v1/${path}`, {
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+      },
+      next: { revalidate },
+    });
+
+    if (!res.ok) {
+      console.warn(`Supabase returned ${res.status} for ${path}; using empty data.`);
+      return [] as T;
+    }
+
+    return (await res.json()) as T;
+  } catch {
+    console.warn(`Supabase fetch failed for ${path}; using empty data.`);
+    return [] as T;
+  }
 }
 
 export async function getSettings(): Promise<Record<string, string>> {
@@ -191,6 +215,13 @@ export async function getActiveAnnouncements(): Promise<Announcement[]> {
 
 export async function getNavLinks(): Promise<NavLink[]> {
   return restGet("nav_links?is_active=eq.true&order=display_order.asc");
+}
+
+export async function getHomepageSections(): Promise<HomepageSection[]> {
+  return restGet(
+    "homepage_sections?is_active=eq.true&order=display_order.asc",
+    10,
+  );
 }
 
 export async function getSmallGroups(): Promise<SmallGroup[]> {
