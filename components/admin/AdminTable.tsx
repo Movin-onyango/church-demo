@@ -94,7 +94,7 @@ export default function AdminTable({ config }: { config: TableConfig }) {
           config={config}
           initial={editing}
           onClose={() => { setEditing(null); setCreating(false); }}
-          onSaved={() => { setEditing(null); setCreating(false); setMessage('Saved.'); load(); }}
+          onSaved={() => { setEditing(null); setCreating(false); setMessage('Saved successfully'); load(); }}
         />
       )}
     </div>

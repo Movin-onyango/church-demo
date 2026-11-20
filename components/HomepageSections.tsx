@@ -3,6 +3,7 @@ import Link from "next/link";
 import type {
   Announcement,
   HomepageSection,
+  HomepageMedia,
   ServiceTime,
   Sermon,
   SmallGroup,
@@ -17,6 +18,7 @@ type Props = {
   announcements: Announcement[];
   visit: VisitInfo[];
   groups: SmallGroup[];
+  homepageMedia: HomepageMedia[];
 };
 
 const DEFAULT_SECTIONS: HomepageSection[] = [
@@ -36,6 +38,71 @@ function setting(
   return settings[key] || fallback;
 }
 
+
+/*type HomepageMedia = {
+  id?: string | number;
+  type?: string;
+  url: string;
+  caption?: string | null;
+  display_order?: number | null;
+};
+*/
+
+type CustomHomepageSection = HomepageSection & {
+  content?: {
+    title?: string | null;
+    body?: string | null;
+    headline?: string | null;
+    subheadline?: string | null;
+  } | null;
+  media?: HomepageMedia[] | null;
+};
+
+function getYouTubeEmbedUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  // Accept either a YouTube video ID or a full YouTube URL.
+  const idMatch = trimmed.match(/^[a-zA-Z0-9_-]{11}$/);
+  if (idMatch) {
+    return `https://www.youtube-nocookie.com/embed/${idMatch[0]}`;
+  }
+
+  try {
+    const url = new URL(
+      trimmed.startsWith("http://") || trimmed.startsWith("https://")
+        ? trimmed
+        : `https://${trimmed}`,
+    );
+
+    const host = url.hostname.replace(/^www\\./, "").toLowerCase();
+    let videoId: string | null = null;
+
+    if (host === "youtu.be") {
+      videoId = url.pathname.split("/").filter(Boolean)[0] ?? null;
+    } else if (
+      host === "youtube.com" ||
+      host === "m.youtube.com" ||
+      host === "youtube-nocookie.com"
+    ) {
+      if (url.pathname === "/watch") {
+        videoId = url.searchParams.get("v");
+      } else {
+        const parts = url.pathname.split("/").filter(Boolean);
+        if (["embed", "shorts", "live"].includes(parts[0] ?? "")) {
+          videoId = parts[1] ?? null;
+        }
+      }
+    }
+
+    return videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)
+      ? `https://www.youtube-nocookie.com/embed/${videoId}`
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function HomepageSectionContent({
   section,
   settings,
@@ -43,6 +110,7 @@ function HomepageSectionContent({
   featured,
   announcements,
   visit,
+  homepageMedia,
 }: Omit<Props, "sections" | "groups"> & { section: HomepageSection }) {
   switch (section.section_type) {
     case "hero":
@@ -285,6 +353,107 @@ function HomepageSectionContent({
           </div>
         </section>
       );
+
+
+    case "custom_text": {
+      const customSection = section as CustomHomepageSection;
+      const content = customSection.content;
+      const media = homepageMedia.filter(
+        (item) => item.record_id === section.id && item.table_name === "homepage_sections",
+      ).sort(
+        (a, b) => (a.display_order ?? 0) - (b.display_order ?? 0),
+      );
+      const heading =
+        content?.title || content?.headline || section.title || "";
+      const body = content?.body || content?.subheadline || "";
+
+      return (
+        <section
+          key={section.id}
+          className="bg-white py-16 md:py-24"
+        >
+          <div className="mx-auto max-w-6xl px-4">
+            {(heading || body) && (
+              <div className="mx-auto mb-10 max-w-3xl text-center">
+                {heading && (
+                  <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 md:text-5xl">
+                    {heading}
+                  </h2>
+                )}
+                {body && (
+                  <div className="mt-5 whitespace-pre-line text-lg leading-relaxed text-slate-600">
+                    {body}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {media.length > 0 && (
+              <div className="grid gap-6 sm:grid-cols-2">
+                {media.map((item, index) => {
+                  const key = item.id ?? `${item.type ?? "media"}-${index}`;
+
+                  if (item.type === "image") {
+                    return (
+                      <figure
+                        key={key}
+                        className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-sm"
+                      >
+                        <div className="relative aspect-video">
+                          <Image
+                            src={item.url}
+                            alt={item.caption || heading || "Church homepage image"}
+                            fill
+                            unoptimized
+                            sizes="(max-width: 640px) 100vw, 50vw"
+                            className="object-cover"
+                          />
+                        </div>
+                        {item.caption && (
+                          <figcaption className="px-4 py-3 text-sm text-slate-600">
+                            {item.caption}
+                          </figcaption>
+                        )}
+                      </figure>
+                    );
+                  }
+
+                  if (item.type === "youtube") {
+                    const embedUrl = getYouTubeEmbedUrl(item.url);
+                    if (!embedUrl) return null;
+
+                    return (
+                      <figure
+                        key={key}
+                        className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-sm"
+                      >
+                        <div className="aspect-video bg-slate-950">
+                          <iframe
+                            src={embedUrl}
+                            title={item.caption || heading || "Church video"}
+                            className="h-full w-full"
+                            loading="lazy"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            allowFullScreen
+                          />
+                        </div>
+                        {item.caption && (
+                          <figcaption className="px-4 py-3 text-sm text-slate-600">
+                            {item.caption}
+                          </figcaption>
+                        )}
+                      </figure>
+                    );
+                  }
+
+                  return null;
+                })}
+              </div>
+            )}
+          </div>
+        </section>
+      );
+    }
 
     case "announcements":
       if (announcements.length === 0) return null;

@@ -1,7 +1,9 @@
+
 import HomepageSections from "@/components/HomepageSections";
 import {
   getActiveAnnouncements,
   getFeaturedSermon,
+  getHomepageMedia,
   getHomepageSections,
   getServiceTimes,
   getSettings,
@@ -12,16 +14,25 @@ import {
 export const revalidate = 10;
 
 export default async function HomePage() {
-  const [settings, services, featured, announcements, visit, groups, sections] =
-    await Promise.all([
-      getSettings(),
-      getServiceTimes(),
-      getFeaturedSermon(),
-      getActiveAnnouncements(),
-      getVisitInfo(),
-      getSmallGroups(),
-      getHomepageSections(),
-    ]);
+  const [
+    settings,
+    services,
+    featured,
+    announcements,
+    visit,
+    groups,
+    sections,
+    homepageMedia,
+  ] = await Promise.all([
+    getSettings(),
+    getServiceTimes(),
+    getFeaturedSermon(),
+    getActiveAnnouncements(),
+    getVisitInfo(),
+    getSmallGroups(),
+    getHomepageSections(),
+    getHomepageMedia(),
+  ]);
 
   return (
     <HomepageSections
@@ -32,6 +43,7 @@ export default async function HomePage() {
       announcements={announcements}
       visit={visit}
       groups={groups}
+      homepageMedia={homepageMedia}
     />
   );
 }

@@ -100,13 +100,23 @@ export type HomepageSectionType =
   | "featured_sermon"
   | "visit_cards"
   | "giving_cta"
-  | "announcements";
+  | "announcements"
+  | "custom_text";
 
 export type HomepageSection = {
   id: number;
   section_type: HomepageSectionType;
   title: string | null;
   is_active: boolean;
+  display_order: number;
+};
+export type HomepageMedia = {
+  id: number;
+  record_id: number;
+  table_name: string;
+  type: "image" | "youtube";
+  url: string;
+  caption: string | null;
   display_order: number;
 };
 
@@ -224,6 +234,12 @@ export async function getHomepageSections(): Promise<HomepageSection[]> {
   );
 }
 
+export async function getHomepageMedia(): Promise<HomepageMedia[]> {
+  return restGet<HomepageMedia[]>(
+    "media?table_name=eq.homepage_sections&select=id,record_id,table_name,type,url,caption,display_order&order=display_order.asc",
+    10,
+  );
+}
 export async function getSmallGroups(): Promise<SmallGroup[]> {
   return restGet("small_groups?is_active=eq.true&order=area.asc");
 }
